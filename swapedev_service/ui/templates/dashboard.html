@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block title %}Console [{{ profile_id }}] — SwapeDev{% endblock %}
+
+{% block content %}
+<div class="space-y-8 max-w-7xl mx-auto">
+
+  <!-- ========================================================================= -->
+  <!-- Top Active Tenant Header Banner -->
+  <!-- ========================================================================= -->
+  <div class="bg-gradient-to-r from-surface-card via-surface-panel to-surface-card border border-surface-border rounded-2xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+    <div class="absolute -right-12 -top-12 w-48 h-48 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
+
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+      
+      <!-- Tenant Identity Title -->
+      <div class="space-y-2">
+        <div class="flex items-center space-x-3">
+          <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+            Tenant Isolated
+          </span>
+          <span class="text-xs font-mono text-slate-400">Port 8776</span>
+        </div>
+        
+        <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center flex-wrap gap-2">
+          <span>SwapeDev Console — Operating as:</span>
+          <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400 font-mono">
+            [{{ profile_id }}]
+          </span>
+        </h1>
+
+        <div class="flex items-center space-x-2 text-xs text-slate-400 pt-1">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+          </svg>
+          <span class="font-mono text-slate-300 text-[11px] truncate max-w-xl" title="{{ profile_path }}">{{ profile_path }}</span>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div id="workerActionsContainer" class="flex flex-wrap items-center gap-3">
+        <!-- Dynamic Warm GPU Button (Enabled) -->
+        <div class="relative group">
+          <button 
+            id="warmGpuBtn"
+            type="button" 
+            class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-mono font-semibold transition-all shadow-lg shadow-blue-500/20 flex items-center space-x-2"
+            title="Warm GPU (Boot T4 Worker)"
+          >
+            <span class="w-2 h-2 rounded-full bg-slate-400" id="warmGpuDot"></span>
+            <span id="warmGpuText">Warm GPU (Boot T4 Worker)</span>
+          </button>
+          
+          <!-- Tooltip on hover -->
+          <div id="workerTooltip" class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-72 p-2.5 bg-surface-base border border-surface-border text-[11px] text-slate-300 rounded-lg shadow-xl text-center pointer-events-none z-20">
+            Global Shared Compute Resource. Boots Kaggle T4 worker with authenticated Cloudflare reverse tunnel.
+          </div>
+        </div>
+
+        <!-- Shutdown GPU Button (Shown when READY) -->
+        <button 
+          id="shutdownGpuBtn" 
+          type="button" 
+          class="hidden px-3.5 py-2 bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800/80 rounded-xl text-xs font-mono font-medium transition-all flex items-center space-x-1.5 shadow-sm"
+          title="Shutdown Kaggle GPU worker to conserve weekly GPU quota"
+        >
+          <svg class="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+          <span>Shutdown GPU</span>
+        </button>
+
+      </div>
+
+    </div>
+
+    <!-- Worker Status Alert (Shown on ERROR or Warning) -->
+    <div id="workerAlertBanner" class="hidden mt-4 p-3 rounded-xl bg-red-950/70 border border-red-800 text-xs font-mono text-red-300 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <svg class="w-4 h-4 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span id="workerAlertText">Boot timeout. Kaggle might be queued.</span>
+      </div>
+      <button type="button" onclick="document.getElementById('workerAlertBanner').classList.add('hidden')" class="text-red-400 hover:text-red-200 text-sm font-bold ml-3">×</button>
+    </div>
+
+    <!-- Sub-bar: Concurrency & Filesystem Invariant Status -->
+    <div class="mt-6 pt-4 border-t border-surface-border/60 flex flex-wrap items-center justify-between gap-4 text-xs">
+      <div class="flex items-center space-x-3 text-slate-400">
+        <span class="flex items-center space-x-1.5">
+          <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+          <span>Pipeline Concurrency: <strong class="text-white font-mono">1 (Single-Flight FIFO)</strong></span>
+        </span>
+        <span class="text-slate-600">•</span>
+        <span>ReActor Cache Policy: <strong class="text-white">Strict Eviction on Switch</strong></span>
+      </div>
+
+      <div class="text-[11px] font-mono text-slate-400">
+        Tenant Scope: <span class="text-emerald-400">Locked to {{ profile_id }}</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- Main Grid: Section 2 & Section 3 Placeholders -->
+  <!-- ========================================================================= -->
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+    <!-- REQUIRED PLACEHOLDER 2: "Character Library (Identity Vault)" (5 Cols) -->
+    <section class="lg:col-span-5 bg-surface-card rounded-2xl border border-surface-border p-6 flex flex-col justify-between space-y-6">
+      <div class="space-y-4">
+        
+        <!-- Section Header -->
+        <div class="flex items-center justify-between border-b border-surface-border/80 pb-4">
+          <div class="space-y-1">
+            <div class="flex items-center space-x-2">
+              <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+              <h2 class="text-base font-bold text-white tracking-tight">Character Library (Identity Vault)</h2>
+            </div>
+            <p class="text-xs text-slate-400">
+              Multi-tenant isolated facial identities & reference embeddings.
+            </p>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-800">
+            Tenant Isolated
+          </span>
+        </div>
+
+        <!-- Scope Path Callout -->
+        <div class="bg-surface-panel p-3.5 rounded-xl border border-surface-border space-y-1 text-xs">
+          <div class="text-slate-400 flex items-center justify-between">
+            <span>Identity Storage Root:</span>
+            <span class="font-mono text-purple-300 font-semibold text-[11px]">Vault Activated</span>
+          </div>
+          <div class="text-[11px] font-mono text-slate-300 truncate" title="{{ profile_path }}/swapedev/character_vault/">
+            {{ profile_path }}/swapedev/character_vault/
+          </div>
+        </div>
+
+        <!-- Identity Slots Placeholder Grid -->
+        <div class="grid grid-cols-2 gap-3 pt-2">
+          
+          <!-- Slot 1 -->
+          <div class="border border-dashed border-surface-border rounded-xl p-4 text-center space-y-2 hover:border-purple-500/50 transition-colors bg-surface-panel/40">
+            <div class="w-12 h-12 mx-auto rounded-full bg-surface-base border border-surface-border flex items-center justify-center text-slate-500">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+              </svg>
+            </div>
+            <div class="text-xs font-semibold text-slate-300">Identity Slot 1</div>
+            <p class="text-[10px] text-slate-400 font-mono">Profile Default</p>
+          </div>
+
+          <!-- Slot 2 -->
+          <div class="border border-dashed border-surface-border rounded-xl p-4 text-center space-y-2 hover:border-purple-500/50 transition-colors bg-surface-panel/40">
+            <div class="w-12 h-12 mx-auto rounded-full bg-surface-base border border-surface-border flex items-center justify-center text-slate-500">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4"/>
+              </svg>
+            </div>
+            <div class="text-xs font-semibold text-slate-300">New Identity</div>
+            <p class="text-[10px] text-slate-400 font-mono">+ Register Face</p>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Section Footer Note -->
+      <div class="pt-4 border-t border-surface-border/60 text-[11px] text-slate-400 flex items-center space-x-2">
+        <svg class="w-4 h-4 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span>Character identity registration and embedding extraction will be integrated in Ticket 2.</span>
+      </div>
+
+    </section>
+
+    <!-- REQUIRED PLACEHOLDER 3: "Video Swap Pipeline" (7 Cols) -->
+    <section class="lg:col-span-7 bg-surface-card rounded-2xl border border-surface-border p-6 flex flex-col justify-between space-y-6">
+      <div class="space-y-6">
+        
+        <!-- Section Header -->
+        <div class="flex items-center justify-between border-b border-surface-border/80 pb-4">
+          <div class="space-y-1">
+            <div class="flex items-center space-x-2">
+              <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              <h2 class="text-base font-bold text-white tracking-tight">Video Swap Pipeline</h2>
+            </div>
+            <p class="text-xs text-slate-400">
+              Single-flight remote face swap execution via Kaggle ComfyUI ReActor.
+            </p>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-800">
+            Queue Concurrency = 1
+          </span>
+        </div>
+
+        <!-- Video Drag & Drop Upload Placeholder Area -->
+        <div class="border-2 border-dashed border-surface-border hover:border-blue-500/50 rounded-2xl p-8 text-center bg-surface-panel/30 transition-all space-y-3 cursor-not-allowed">
+          <div class="w-12 h-12 mx-auto rounded-full bg-surface-base border border-surface-border flex items-center justify-center text-blue-400">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+          </div>
+          <div>
+            <span class="text-xs font-semibold text-slate-200">Drag and drop source video (MP4/WebM)</span>
+            <p class="text-[11px] text-slate-400 mt-1">Staging path strictly isolated to <code class="font-mono text-slate-300">{{ profile_path }}/swapedev/staging/</code></p>
+          </div>
+        </div>
+
+        <!-- Pipeline Parameter Controls Preview -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+          
+          <!-- Denoise Setting -->
+          <div class="bg-surface-panel p-3.5 rounded-xl border border-surface-border space-y-1.5 opacity-70">
+            <div class="flex items-center justify-between text-slate-300 font-semibold">
+              <span>Denoise:</span>
+              <span class="font-mono text-blue-400">0.60</span>
+            </div>
+            <div class="w-full bg-surface-base h-1.5 rounded-full overflow-hidden">
+              <div class="bg-blue-500 h-full w-3/5"></div>
+            </div>
+            <p class="text-[10px] text-slate-400">Face blend denoise value</p>
+          </div>
+
+          <!-- Restoration Model -->
+          <div class="bg-surface-panel p-3.5 rounded-xl border border-surface-border space-y-1.5 opacity-70">
+            <div class="flex items-center justify-between text-slate-300 font-semibold">
+              <span>Restore Model:</span>
+            </div>
+            <div class="font-mono text-xs text-white bg-surface-base px-2 py-1 rounded border border-surface-border">
+              GFPGANv1.4
+            </div>
+            <p class="text-[10px] text-slate-400">ReActor face enhancer</p>
+          </div>
+
+          <!-- CodeFormer Weight -->
+          <div class="bg-surface-panel p-3.5 rounded-xl border border-surface-border space-y-1.5 opacity-70">
+            <div class="flex items-center justify-between text-slate-300 font-semibold">
+              <span>CodeFormer:</span>
+              <span class="font-mono text-blue-400">0.50</span>
+            </div>
+            <div class="w-full bg-surface-base h-1.5 rounded-full overflow-hidden">
+              <div class="bg-blue-500 h-full w-1/2"></div>
+            </div>
+            <p class="text-[10px] text-slate-400">Fidelity vs quality balance</p>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Action Button & Pipeline Status -->
+      <div class="pt-4 border-t border-surface-border/60 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="text-[11px] text-slate-400 flex items-center space-x-2">
+          <svg class="w-4 h-4 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span>Single-Flight queue admission controls enforced.</span>
+        </div>
+
+        <button 
+          type="button" 
+          disabled 
+          class="w-full sm:w-auto px-6 py-2.5 bg-slate-800 text-slate-500 font-semibold text-xs rounded-xl cursor-not-allowed border border-slate-700/60"
+        >
+          Submit Swap Job (Offline)
+        </button>
+      </div>
+
+    </section>
+
+  </div>
+
+</div>
+
+<!-- ========================================================================= -->
+<!-- Worker Orchestration & Polling Script (Ticket 2) -->
+<!-- ========================================================================= -->
+<script>
+(function() {
+  const profileId = "{{ profile_id }}";
+  const warmBtn = document.getElementById("warmGpuBtn");
+  const shutdownBtn = document.getElementById("shutdownGpuBtn");
+  const alertBanner = document.getElementById("workerAlertBanner");
+  const alertText = document.getElementById("workerAlertText");
+  const tooltip = document.getElementById("workerTooltip");
+
+  let pollInterval = null;
+  let isRequestInProgress = false;
+
+  const spinnerSvg = `
+    <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-amber-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>`;
+
+  function renderState(data) {
+    const state = (data && data.state) ? data.state.toUpperCase() : "OFFLINE";
+    const tunnelUrl = data ? data.tunnel_url : null;
+    const uptime = data && data.uptime ? Math.floor(data.uptime) : 0;
+    const errorMsg = data ? data.error : null;
+
+    if (state === "BOOTING" || state === "AWAITING_TUNNEL") {
+      warmBtn.disabled = true;
+      warmBtn.className = "px-5 py-2.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-mono font-semibold cursor-not-allowed flex items-center space-x-2 animate-pulse shadow-sm";
+      warmBtn.innerHTML = `${spinnerSvg}<span>Booting... Awaiting Tunnel (Takes ~90s)</span>`;
+      shutdownBtn.classList.add("hidden");
+      if (errorMsg) {
+        alertText.textContent = errorMsg;
+        alertBanner.classList.remove("hidden");
+      } else {
+        alertBanner.classList.add("hidden");
+      }
+      if (tooltip) {
+        tooltip.textContent = errorMsg || "Kaggle T4 worker is booting. Acquiring authenticated Cloudflare reverse tunnel...";
+      }
+    } else if (state === "READY") {
+      warmBtn.disabled = true;
+      warmBtn.className = "px-5 py-2.5 bg-emerald-950/80 text-emerald-400 border border-emerald-500/40 rounded-xl text-xs font-mono font-semibold flex items-center space-x-2 shadow-sm shadow-emerald-500/20 cursor-default";
+      warmBtn.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span>GPU Ready - Online</span>`;
+      shutdownBtn.classList.remove("hidden");
+      alertBanner.classList.add("hidden");
+      if (tooltip) {
+        tooltip.innerHTML = `Worker Online (Uptime: ${uptime}s)<br><span class="text-blue-300 font-mono text-[10px] break-all">${tunnelUrl || 'Active Tunnel'}</span>`;
+      }
+    } else if (state === "ERROR") {
+      warmBtn.disabled = false;
+      warmBtn.className = "px-5 py-2.5 bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-700/80 rounded-xl text-xs font-mono font-semibold transition-all shadow-md flex items-center space-x-2";
+      warmBtn.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-red-400"></span>
+        <span>Warm GPU (Retry)</span>`;
+      shutdownBtn.classList.add("hidden");
+      const displayErr = errorMsg || "Boot timeout. Kaggle might be queued.";
+      alertText.textContent = displayErr;
+      alertBanner.classList.remove("hidden");
+      if (tooltip) {
+        tooltip.textContent = displayErr;
+      }
+    } else {
+      // OFFLINE
+      warmBtn.disabled = false;
+      warmBtn.className = "px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-mono font-semibold transition-all shadow-lg shadow-blue-500/20 flex items-center space-x-2";
+      warmBtn.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+        <span>Warm GPU (Boot T4 Worker)</span>`;
+      shutdownBtn.classList.add("hidden");
+      alertBanner.classList.add("hidden");
+      if (tooltip) {
+        tooltip.textContent = "Global Shared Compute Resource. Click to boot Kaggle T4 worker.";
+      }
+    }
+  }
+
+  async function pollStatus() {
+    try {
+      const res = await fetch(`/api/worker/status?profile_id=${encodeURIComponent(profileId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        renderState(data);
+      }
+    } catch (e) {
+      console.warn("Poll status failed:", e);
+    }
+  }
+
+  async function onWarmClick() {
+    if (isRequestInProgress) return;
+    isRequestInProgress = true;
+    warmBtn.disabled = true;
+    warmBtn.className = "px-5 py-2.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-mono font-semibold cursor-not-allowed flex items-center space-x-2 animate-pulse";
+    warmBtn.innerHTML = `${spinnerSvg}<span>Booting... Awaiting Tunnel (Takes ~90s)</span>`;
+    alertBanner.classList.add("hidden");
+
+    try {
+      const res = await fetch(`/api/worker/start?profile_id=${encodeURIComponent(profileId)}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok || (data && data.state === "ERROR")) {
+        const errMsg = (data && data.error) || (data && data.detail) || (data && data.message) || `Error (${res.status})`;
+        alertText.textContent = errMsg;
+        alertBanner.classList.remove("hidden");
+      }
+      renderState(data);
+    } catch (err) {
+      console.error("Start worker failed:", err);
+      alertText.textContent = "Failed to communicate with orchestrator service.";
+      alertBanner.classList.remove("hidden");
+      warmBtn.disabled = false;
+    } finally {
+      isRequestInProgress = false;
+      pollStatus();
+    }
+  }
+
+  async function onShutdownClick() {
+    if (isRequestInProgress) return;
+    isRequestInProgress = true;
+    shutdownBtn.disabled = true;
+
+    try {
+      const res = await fetch(`/api/worker/stop?profile_id=${encodeURIComponent(profileId)}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      renderState(data);
+    } catch (err) {
+      console.error("Shutdown worker failed:", err);
+    } finally {
+      shutdownBtn.disabled = false;
+      isRequestInProgress = false;
+      pollStatus();
+    }
+  }
+
+  if (warmBtn) warmBtn.addEventListener("click", onWarmClick);
+  if (shutdownBtn) shutdownBtn.addEventListener("click", onShutdownClick);
+
+  // Initial poll & 3-second recurring interval
+  pollStatus();
+  pollInterval = setInterval(pollStatus, 3000);
+})();
+</script>
+{% endblock %}

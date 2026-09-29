@@ -1,0 +1,14 @@
+# swapedev_service Git Ignore
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.env
+.env.*
+*.env
+!.env.example
+staging/
+workers/
+profiles/*/config.json
+profiles/**/config.json
+

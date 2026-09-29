@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}SwapeDev Gatekeeper{% endblock %} — Desi Camoufox Ecosystem</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              900: '#1e3a8a',
+            },
+            surface: {
+              base: '#090b10',
+              card: '#11151f',
+              panel: '#161c2a',
+              border: '#1f293d',
+              accent: '#26334d'
+            }
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #090b10;
+      color: #e2e8f0;
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #090b10;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #1f293d;
+      border-radius: 3px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #3b82f6;
+    }
+  </style>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="min-h-screen flex flex-col font-sans antialiased custom-scrollbar">
+
+  <!-- Top Global Navigation Bar -->
+  <header class="border-b border-surface-border bg-surface-card/90 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand & Ecosystem Context -->
+      <div class="flex items-center space-x-4">
+        <a href="{% if active_profile %}/dashboard?profile_id={{ active_profile }}{% else %}/{% endif %}" class="flex items-center space-x-3 group">
+          <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
+            <span class="text-white font-mono font-bold text-lg">S</span>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-lg tracking-tight text-white group-hover:text-blue-400 transition-colors">SwapeDev</span>
+              <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-800/60">Port 8776</span>
+            </div>
+            <p class="text-xs text-slate-400 tracking-wide">Desi Camoufox Multi-Tenant Extended Service</p>
+          </div>
+        </a>
+      </div>
+
+      <!-- Right Navigation & Tenant Context Indicator -->
+      <div class="flex items-center space-x-4">
+        {% if active_profile %}
+          <div class="flex items-center space-x-3 bg-surface-panel px-3 py-1.5 rounded-lg border border-surface-border">
+            <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+            <div class="text-xs">
+              <span class="text-slate-400">Context:</span>
+              <span class="font-mono font-semibold text-emerald-400 ml-1">[{{ active_profile }}]</span>
+            </div>
+          </div>
+        {% else %}
+          <div class="flex items-center space-x-2 text-xs text-amber-400 bg-amber-950/40 px-3 py-1.5 rounded-lg border border-amber-800/50">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            <span>No Tenant Context</span>
+          </div>
+        {% endif %}
+
+        <a href="/setup" class="text-xs text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-surface-panel" title="Config & Credentials">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </a>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Flash/Alert Messages -->
+  {% if alert_message %}
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 w-full">
+      <div class="p-4 rounded-xl {% if alert_type == 'error' %}bg-rose-950/60 border border-rose-800 text-rose-200{% elif alert_type == 'success' %}bg-emerald-950/60 border border-emerald-800 text-emerald-200{% else %}bg-blue-950/60 border border-blue-800 text-blue-200{% endif %} flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <span class="font-medium text-sm">{{ alert_message }}</span>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- Main Content Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Minimalist Ecosystem Footer -->
+  <footer class="border-t border-surface-border/60 py-6 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div class="flex items-center space-x-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
+        <span>SwapeDev Gatekeeper v1.1.0</span>
+        <span class="text-slate-600">•</span>
+        <span>Strict Multi-Tenant Invariant: Zero Global State</span>
+      </div>
+      <div>Desi Camoufox Isolation Framework</div>
+    </div>
+  </footer>
+
+  {% block script_extra %}{% endblock %}
+</body>
+</html>

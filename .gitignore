@@ -1,0 +1,21 @@
+# SwapeDev Git Ignore
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.env
+.env.*
+*.env
+!.env.example
+.venv
+.venv/
+secrets.json
+kaggle.json
+staging/
+workers/
+outputs/
+*.pem
+*.key
+profiles/*/config.json
+profiles/**/config.json
+

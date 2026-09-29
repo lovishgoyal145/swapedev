@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}Select Profile Context — SwapeDev{% endblock %}
+
+{% block content %}
+<div class="space-y-8 max-w-6xl mx-auto">
+
+  <!-- Top Hero & Context Explanation -->
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-surface-border pb-6">
+    <div>
+      <div class="flex items-center space-x-2 text-blue-400 mb-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+        </svg>
+        <span class="text-xs font-mono uppercase tracking-wider font-semibold">Tenant Admission Gate</span>
+      </div>
+      <h1 class="text-3xl font-extrabold tracking-tight text-white">Select Profile Context</h1>
+      <p class="text-sm text-slate-400 mt-1 max-w-2xl">
+        SwapeDev functions strictly as an extended service for the Desi Camoufox ecosystem. Choose an isolated browser tenant profile to enter the console.
+      </p>
+    </div>
+
+    <!-- System & Profile Root Info Pill -->
+    <div class="bg-surface-card p-4 rounded-xl border border-surface-border space-y-1 text-xs">
+      <div class="flex items-center justify-between text-slate-400">
+        <span>Profiles Detected:</span>
+        <span class="font-mono font-bold text-white ml-2 bg-blue-950/80 px-2 py-0.5 rounded border border-blue-800">{{ profiles|length }}</span>
+      </div>
+      <div class="text-[11px] text-slate-500 font-mono truncate max-w-xs" title="{{ profiles_dir }}">
+        {{ profiles_dir }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Search & Filter Bar -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div class="relative flex-1 max-w-md">
+      <svg class="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <input 
+        type="text" 
+        id="profileSearch" 
+        onkeyup="filterProfiles()" 
+        placeholder="Search profiles (e.g. maxx, enigma)..." 
+        class="w-full bg-surface-card border border-surface-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono transition-all"
+      />
+    </div>
+
+    <div class="flex items-center space-x-2 text-xs text-slate-400">
+      <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+      <span>Config Gatekeeper: <strong>Verified</strong></span>
+      <span class="text-slate-600">|</span>
+      <a href="/setup" class="text-blue-400 hover:underline">Edit Credentials</a>
+    </div>
+  </div>
+
+  <!-- Profile Cards Grid -->
+  {% if profiles %}
+    <div id="profilesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      {% for profile in profiles %}
+        <div class="profile-card bg-surface-card rounded-2xl border border-surface-border hover:border-blue-500/60 p-5 transition-all duration-200 hover:-translate-y-1 hover:shadow-xl hover:shadow-blue-950/20 flex flex-col justify-between group" data-profile-name="{{ profile.id|lower }} {{ profile.folder_name|lower }}">
+          
+          <div>
+            <!-- Card Top: Name & Lock Badge -->
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-surface-panel border border-surface-border flex items-center justify-center text-blue-400 font-mono font-bold text-sm group-hover:bg-blue-600 group-hover:text-white transition-colors shadow-inner">
+                  {{ profile.id[:2]|upper }}
+                </div>
+                <div>
+                  <h3 class="font-bold text-base text-white tracking-tight group-hover:text-blue-400 transition-colors">
+                    {{ profile.id }}
+                  </h3>
+                  <p class="text-[11px] font-mono text-slate-400 truncate max-w-[140px]" title="{{ profile.folder_name }}">
+                    {{ profile.folder_name }}
+                  </p>
+                </div>
+              </div>
+
+              {% if profile.is_locked %}
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-800 flex items-center space-x-1" title="Active Camoufox browser session lock detected">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  <span>Locked</span>
+                </span>
+              {% else %}
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center space-x-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span>Idle</span>
+                </span>
+              {% endif %}
+            </div>
+
+            <!-- Card Middle: Stats & Directory Info -->
+            <div class="mt-4 pt-3 border-t border-surface-border/60 space-y-1.5 text-xs text-slate-400">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px]">Last Active:</span>
+                <span class="font-mono text-[11px] text-slate-300">{{ profile.mtime_str }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-[11px]">Storage Files:</span>
+                <span class="font-mono text-[11px] text-slate-300">{{ profile.item_count }} items</span>
+              </div>
+              <div class="text-[10px] text-slate-500 font-mono truncate pt-1" title="{{ profile.path }}">
+                {{ profile.path }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Card Bottom: Select Button -->
+          <div class="mt-5 pt-3 border-t border-surface-border/60">
+            <a 
+              href="/dashboard?profile_id={{ profile.id }}" 
+              class="w-full py-2.5 px-4 bg-surface-panel hover:bg-blue-600 text-slate-200 hover:text-white rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all group-hover:bg-blue-600 group-hover:text-white shadow"
+            >
+              <span>Operate as [{{ profile.id }}]</span>
+              <svg class="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+              </svg>
+            </a>
+          </div>
+
+        </div>
+      {% endfor %}
+    </div>
+
+    <div id="noFilterMatch" class="hidden text-center py-12 bg-surface-card rounded-2xl border border-surface-border">
+      <p class="text-sm text-slate-400">No profile matches your search query.</p>
+    </div>
+
+  {% else %}
+    <!-- Empty State -->
+    <div class="text-center py-16 px-4 bg-surface-card rounded-2xl border border-surface-border space-y-4">
+      <div class="w-12 h-12 mx-auto rounded-full bg-surface-panel flex items-center justify-center text-slate-400">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-white">No Camoufox Profiles Detected</h3>
+      <p class="text-xs text-slate-400 max-w-md mx-auto">
+        No directory was found inside <code class="font-mono text-slate-300">{{ profiles_dir }}</code>.
+        Create a Camoufox profile via the Avido browser runner or check the path configuration in <code class="font-mono text-slate-300">.env</code>.
+      </p>
+      <div class="pt-2">
+        <a href="/setup" class="inline-flex items-center px-4 py-2 bg-surface-panel hover:bg-surface-accent rounded-xl text-xs font-semibold text-slate-200 transition-colors">
+          Adjust Ecosystem Paths in Setup
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- Multi-Tenant Architecture Note -->
+  <div class="p-5 rounded-2xl bg-surface-card/60 border border-surface-border text-xs text-slate-400 flex items-start space-x-3">
+    <div class="mt-0.5 text-blue-400">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+    </div>
+    <div>
+      <span class="font-semibold text-slate-200">Strict Filesystem Multi-Tenant Invariant:</span>
+      SwapeDev does not operate with a global database or global identity pool. All identity embeddings, reference target faces, and swapped video outputs are persisted exclusively within the active profile's folder.
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block script_extra %}
+<script>
+  function filterProfiles() {
+    const query = document.getElementById('profileSearch').value.toLowerCase().trim();
+    const cards = document.querySelectorAll('.profile-card');
+    let visibleCount = 0;
+
+    cards.forEach(card => {
+      const name = card.getAttribute('data-profile-name');
+      if (!query || name.includes(query)) {
+        card.style.display = 'flex';
+        visibleCount++;
+      } else {
+        card.style.display = 'none';
+      }
+    });
+
+    const noMatch = document.getElementById('noFilterMatch');
+    if (noMatch) {
+      noMatch.style.display = (visibleCount === 0 && query.length > 0) ? 'block' : 'none';
+    }
+  }
+</script>
+{% endblock %}

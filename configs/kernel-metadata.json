@@ -1,0 +1,17 @@
+{
+  "id": "tester_maxx/swapedev-backend",
+  "title": "SwapeDev Backend",
+  "code_file": "../scripts/kaggle_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "avidok/swapedev-base-models",
+    "tester_maxx/swapedev-secrets-maxx"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
