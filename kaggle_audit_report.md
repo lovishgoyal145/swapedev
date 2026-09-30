@@ -3,7 +3,7 @@
 ```text
 ============================================================
       SWAPEDEV KAGGLE DIAGNOSTIC AUDIT REPORT
-      Execution Timestamp: 2026-09-29T14:58:27.960305
+      Execution Timestamp: 2026-09-30T09:43:58.117423
 ============================================================
 
 [1] CREDENTIAL RESOLUTION AUDIT
@@ -14,9 +14,6 @@
   * Key Type Prefix      : Legacy Key / Custom
 
 [1.1] HOST CREDENTIAL HIJACKING CHECK (~/.kaggle)
-  [!] WARNING: Host access_token exists: /home/lovish/.kaggle/access_token
-      Token value: KGAT_81...735e
-      (Risk: Kaggle Python SDK will default to this token unless KAGGLE_CONFIG_DIR or KAGGLE_API_TOKEN is isolated!)
   [!] WARNING: Host kaggle.json exists: /home/lovish/.kaggle/kaggle.json (user: avidok)
 
 [2] KERNEL METADATA AUDIT
@@ -48,10 +45,13 @@
   * Title Slug Derived   : 'swapedev-backend'
 
 [3] KAGGLE PYTHON API QUERY
-  [!] API Initialization / Auth Error: HTTPSConnectionPool(host='api.kaggle.com', port=443): Max retries exceeded with url: /v1/security.OAuthService/IntrospectToken (Caused by NameResolutionError("HTTPSConnection(host='api.kaggle.com', port=443): Failed to resolve 'api.kaggle.com' ([Errno -2] Name or service not known)"))
+  * API Authenticated As : tester_maxx (via LEGACY_API_KEY)
+  * Querying status for  : tester_maxx/swapedev-backend
+  * Kernel Status Error  : HTTPSConnectionPool(host='api.kaggle.com', port=443): Max retries exceeded with url: /v1/kernels.KernelsApiService/GetKernelSessionStatus (Caused by NameResolutionError("HTTPSConnection(host='api.kaggle.com', port=443): Failed to resolve 'api.kaggle.com' ([Errno -2] Name or service not known)"))
+  * Querying kernel list for user 'tester_maxx'...
+  * Kernel List Error    : HTTPSConnectionPool(host='api.kaggle.com', port=443): Max retries exceeded with url: /v1/kernels.KernelsApiService/ListKernels (Caused by NameResolutionError("HTTPSConnection(host='api.kaggle.com', port=443): Failed to resolve 'api.kaggle.com' ([Errno -2] Name or service not known)"))
 
 [4] DIAGNOSTIC ASSESSMENT & ROOT CAUSE
-  [!] ISSUE: Host ~/.kaggle/access_token threatens to hijack Kaggle SDK credentials.
   [✓] Audit execution complete.
 ============================================================
 ```
