@@ -18,6 +18,7 @@ import subprocess
 import threading
 import json
 import re
+import hashlib
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -32,20 +33,70 @@ DATASET_BASE = "/kaggle/input/swapedev-base-models"
 IDLE_WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("SWAPEDEV_IDLE_WATCHDOG_SECONDS", "600"))
 HEARTBEAT_INTERVAL_SECONDS = 30
 
+# Model specifications with verified SHA-256 hashes and file sizes
+MODEL_SPECS = {
+    "sd-v1-5-inpainting.ckpt": {
+        "subfolder": os.path.join("models", "checkpoints"),
+        "url": "https://huggingface.co/runwayml/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt",
+        "expected_sha256": "c6bbc15e3224e6973459ba78de4998b80b50112b0ae5b5c67113d56b4e366b19",
+        "expected_size": 4265437280,
+    },
+    "sam2_hiera_small.pt": {
+        "subfolder": os.path.join("models", "sam2"),
+        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt",
+        "expected_sha256": "95949964d4e548409021d47b22712d5f1abf2564cc0c3c765ba599a24ac7dce3",
+        "expected_size": 184309650,
+    },
+    "inswapper_128.onnx": {
+        "subfolder": os.path.join("models", "insightface"),
+        "url": "https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
+        "expected_sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
+        "expected_size": 554253681,
+    },
+    "v3_sd15_mm.ckpt": {
+        "subfolder": os.path.join("models", "animatediff_models"),
+        "url": "https://huggingface.co/guoyww/animatediff/resolve/main/v3_sd15_mm.ckpt",
+        "expected_sha256": "2412711886f61091846f53204aabc38aa6e09356d62a9808abe4daa802168343",
+        "expected_size": 1673262583,
+    },
+}
+
+# Pinned commit hashes for ComfyUI and custom nodes
+PINNED_COMMITS = {
+    "ComfyUI": "8cfe5e1ecb97512dea8deaac15e1228d7e6feeb1",
+    "ComfyUI-Manager": "1e40793fc54da01c3031b4c89a30d105ef86b729",
+    "ComfyUI-SAM2": "0c35fff5f382803e2310103357b5e985f5437f32",
+    "ComfyUI-Impact-Pack": "429d0159ad429e64d2b3916e6e7be9c22d025c3c",
+    "ComfyUI-AnimateDiff-Evolved": "9257651221002dcba0a12f9cff37e1944e58fb60",
+    "ComfyUI-ReActor": "a12c5b19dcac9ae8b47e592da39c9711c8f8c756",
+}
+
 
 def log(message: str):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
 
+def compute_sha256(filepath: str, chunk_size: int = 8 * 1024 * 1024) -> str:
+    """Computes SHA-256 digest in 8MB chunks to minimize memory footprint."""
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def load_secrets() -> dict:
     """
-    Retrieves secrets strictly from the mounted Kaggle dataset:
-    /kaggle/input/swapedev-secrets-{profile_id}/secrets.json
+    Retrieves secrets recursively from mounted Kaggle datasets under /kaggle/input/.
+    Handles nested directory layouts like /kaggle/input/datasets/<user>/<slug>/secrets.json
+    as well as /kaggle/input/<slug>/secrets.json.
     Fallback: OS environment variables.
     """
     secrets_data = {}
 
-    # Candidate paths for secrets.json
     candidate_paths = []
     custom_path = os.getenv("SWAPEDEV_SECRETS_PATH")
     if custom_path:
@@ -53,11 +104,17 @@ def load_secrets() -> dict:
 
     input_dir = Path("/kaggle/input")
     if input_dir.exists():
-        for p in sorted(input_dir.glob("swapedev-secrets*/secrets.json")):
-            candidate_paths.append(p)
-        for p in sorted(input_dir.glob("*/secrets.json")):
-            if p not in candidate_paths:
-                candidate_paths.append(p)
+        # Recursive walk to discover secrets.json at any depth
+        all_discovered = []
+        for root, _, files in os.walk(str(input_dir)):
+            if "secrets.json" in files:
+                all_discovered.append(Path(root) / "secrets.json")
+
+        # Prioritize paths matching swapedev-secrets
+        secret_matches = [p for p in all_discovered if "swapedev-secrets" in str(p)]
+        other_matches = [p for p in all_discovered if p not in secret_matches]
+        candidate_paths.extend(sorted(secret_matches))
+        candidate_paths.extend(sorted(other_matches))
 
     found_path = None
     for cand in candidate_paths:
@@ -77,6 +134,10 @@ def load_secrets() -> dict:
             log(f"Warning: Failed to parse secrets JSON from {found_path}: {e}")
     else:
         log("Notice: No mounted secrets dataset found under /kaggle/input.")
+        if input_dir.exists():
+            log("Dumping /kaggle/input directory tree for diagnostics:")
+            for root, dirs, files in os.walk(str(input_dir)):
+                log(f"  [DIR] {root} -> dirs: {dirs}, files: {files}")
 
     # Fill missing from OS environment
     for k in (
@@ -106,111 +167,152 @@ def run_command(cmd, check=True, cwd=None):
 
 
 def link_or_copy(src_path: str, dst_path: str):
-    """Creates symlink or copy from Kaggle dataset into ComfyUI models."""
+    """Creates symlink from Kaggle dataset into ComfyUI models. Does NOT copy files."""
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-    if os.path.exists(dst_path):
-        log(f"Destination {dst_path} already exists. Skipping.")
-        return dst_path
+    if os.path.exists(dst_path) or os.path.islink(dst_path):
+        if os.path.islink(dst_path) and os.path.realpath(dst_path) == os.path.realpath(src_path):
+            log(f"Destination {dst_path} already symlinked to {src_path}. Skipping.")
+            return dst_path
+        try:
+            os.remove(dst_path)
+        except OSError:
+            pass
 
     try:
         os.symlink(src_path, dst_path)
         log(f"Symlinked {src_path} -> {dst_path}")
-    except OSError:
-        import shutil
-        log(f"Symlink failed, copying {src_path} -> {dst_path}...")
-        shutil.copyfile(src_path, dst_path)
+    except OSError as e:
+        log(f"Symlink creation failed for {src_path} -> {dst_path}: {e}")
+        raise
     return dst_path
 
 
 def download_file(url: str, target_dir: str, filename: str):
-    """Fallback download if dataset is missing."""
+    """Downloads file via aria2c or curl."""
     os.makedirs(target_dir, exist_ok=True)
     target_path = os.path.join(target_dir, filename)
     if os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
-        log(f"File {filename} already exists at {target_path}. Skipping.")
+        log(f"File {filename} already exists at {target_path}.")
         return target_path
 
-    log(f"Downloading {filename} via aria2c...")
-    cmd = [
-        "aria2c",
-        "-c",
-        "-x", "16",
-        "-s", "16",
-        "-k", "1M",
-        "--file-allocation=none",
-        "-d", target_dir,
-        "-o", filename,
-        url
-    ]
-    subprocess.run(cmd, check=True)
+    log(f"Downloading {filename} from {url}...")
+    try:
+        cmd = [
+            "aria2c",
+            "-c",
+            "-x", "16",
+            "-s", "16",
+            "-k", "1M",
+            "--file-allocation=none",
+            "-d", target_dir,
+            "-o", filename,
+            url
+        ]
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        log(f"aria2c failed ({e}), falling back to curl...")
+        cmd = ["curl", "-fSL", "--retry", "3", "-o", target_path, url]
+        subprocess.run(cmd, check=True)
     return target_path
+
+
+def git_clone_pinned(repo_url: str, dest_dir: str, commit_hash: str):
+    """Clones repository if not present and checks out exact pinned commit."""
+    if not os.path.exists(dest_dir):
+        log(f"Cloning {repo_url} into {dest_dir}...")
+        run_command(["git", "clone", repo_url, dest_dir])
+    log(f"Checking out pinned commit {commit_hash} in {dest_dir}...")
+    run_command(["git", "-C", dest_dir, "checkout", commit_hash])
 
 
 def setup_models_from_dataset_or_fallback(comfy_dir: str) -> bool:
     """
-    Mounts models from /kaggle/input/swapedev-base-models/.
-    Falls back to download only if Kaggle dataset is not attached.
+    Mounts models from mounted Kaggle datasets under /kaggle/input/.
+    Fail-closed:
+    - Verifies all 4 model files for existence, expected file size, and exact SHA-256 hash.
+    - If a model file is missing from /kaggle/input, runtime download is REJECTED
+      unless SWAPEDEV_ALLOW_RUNTIME_DOWNLOAD=true is explicitly set.
+    - If any size or SHA-256 hash mismatches, raises RuntimeError immediately.
+    - Points ComfyUI at mounted models via symlinks (zero file copying).
+    - Logs which source (dataset path vs download url) each file came from.
     """
     log("==================================================")
     log("  Step 4: Configuring Base Models & Weights       ")
     log("==================================================")
 
-    models_config = [
-        # (filename, target_subfolder, fallback_url)
-        (
-            "sd-v1-5-inpainting.ckpt",
-            os.path.join(comfy_dir, "models", "checkpoints"),
-            "https://huggingface.co/runwayml/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt"
-        ),
-        (
-            "sam2_hiera_small.pt",
-            os.path.join(comfy_dir, "models", "sam2"),
-            "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt"
-        ),
-        (
-            "inswapper_128.onnx",
-            os.path.join(comfy_dir, "models", "insightface"),
-            "https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx"
-        ),
-        (
-            "v3_sd15_mm.ckpt",
-            os.path.join(comfy_dir, "models", "animatediff_models"),
-            "https://huggingface.co/guoyww/animatediff/resolve/main/v3_sd15_mm.ckpt"
-        ),
-    ]
+    allow_download = os.getenv("SWAPEDEV_ALLOW_RUNTIME_DOWNLOAD", "false").lower() in ("true", "1", "yes")
+    all_from_dataset = True
 
-    dataset_found = os.path.exists(DATASET_BASE)
-    if dataset_found:
-        log(f"Found mounted Kaggle Dataset at {DATASET_BASE}!")
-    else:
-        log(f"Kaggle Dataset not found at {DATASET_BASE}. Will use network download fallback.")
+    # Build a lookup of existing files across all /kaggle/input subdirectories
+    input_file_map = {}
+    if os.path.exists("/kaggle/input"):
+        for root, _, files in os.walk("/kaggle/input"):
+            for f in files:
+                if f not in input_file_map:
+                    input_file_map[f] = os.path.join(root, f)
 
-    for filename, target_dir, fallback_url in models_config:
-        target_file_path = os.path.join(target_dir, filename)
-        if os.path.exists(target_file_path) and os.path.getsize(target_file_path) > 1000:
-            log(f"Model {filename} already staged at {target_file_path}")
-            continue
+    for filename, spec in MODEL_SPECS.items():
+        source_in_dataset = input_file_map.get(filename)
+        source_path = None
+        source_type = ""
 
-        # Check in Kaggle dataset (direct or recursive)
-        source_in_dataset = None
-        if dataset_found:
-            direct_path = os.path.join(DATASET_BASE, filename)
-            if os.path.exists(direct_path):
-                source_in_dataset = direct_path
-            else:
-                for root, _, files in os.walk(DATASET_BASE):
-                    if filename in files:
-                        source_in_dataset = os.path.join(root, filename)
-                        break
-
-        if source_in_dataset and os.path.exists(source_in_dataset):
-            log(f"Instant mounting model from Kaggle Dataset: {source_in_dataset}")
-            link_or_copy(source_in_dataset, target_file_path)
+        if source_in_dataset and os.path.isfile(source_in_dataset):
+            source_path = source_in_dataset
+            source_type = f"dataset: {source_path}"
+            log(f"Discovered model '{filename}' in mounted Kaggle dataset: {source_path}")
         else:
-            log(f"Model {filename} not in dataset. Falling back to live download...")
-            download_file(fallback_url, target_dir, filename)
+            all_from_dataset = False
+            if not allow_download:
+                err_msg = (
+                    f"Fail-Closed: Required model '{filename}' not found in any mounted dataset under /kaggle/input, "
+                    f"and SWAPEDEV_ALLOW_RUNTIME_DOWNLOAD is false. "
+                    f"Attach the dataset avidok/swapedev-base-models or enable runtime downloads."
+                )
+                log(f"[FATAL MODEL CONFIGURATION ERROR] {err_msg}")
+                raise RuntimeError(err_msg)
 
-    return dataset_found
+            log(f"Model '{filename}' not in dataset. Runtime download enabled. Downloading from {spec['url']}...")
+            download_dir = "/kaggle/tmp/downloads"
+            source_path = download_file(spec["url"], download_dir, filename)
+            source_type = f"download: {spec['url']}"
+
+        # 1. Verify existence
+        if not os.path.isfile(source_path):
+            raise RuntimeError(f"Fail-Closed: Staged model file does not exist at {source_path}")
+
+        # 2. Verify file size
+        actual_size = os.path.getsize(source_path)
+        expected_size = spec["expected_size"]
+        if actual_size != expected_size:
+            err_msg = (
+                f"Fail-Closed: Size mismatch for '{filename}' ({source_type}): "
+                f"expected {expected_size} bytes, got {actual_size} bytes."
+            )
+            log(f"[FATAL INTEGRITY ERROR] {err_msg}")
+            raise RuntimeError(err_msg)
+
+        # 3. Verify SHA-256 hash
+        expected_sha = spec["expected_sha256"]
+        log(f"Verifying SHA-256 checksum for '{filename}' ({source_type})...")
+        actual_sha = compute_sha256(source_path)
+        if actual_sha != expected_sha:
+            err_msg = (
+                f"Fail-Closed: SHA-256 mismatch for '{filename}' ({source_type}): "
+                f"expected {expected_sha}, got {actual_sha}."
+            )
+            log(f"[FATAL INTEGRITY ERROR] {err_msg}")
+            raise RuntimeError(err_msg)
+
+        log(f"Integrity PASS: '{filename}' verified (SHA-256: {actual_sha[:16]}..., size: {actual_size} bytes, source: {source_type})")
+
+        # 4. Point ComfyUI at mounted model via symlink (zero copying)
+        target_dir = os.path.join(comfy_dir, spec["subfolder"])
+        os.makedirs(target_dir, exist_ok=True)
+        target_path = os.path.join(target_dir, filename)
+        link_or_copy(source_path, target_path)
+
+    log("All base models verified and linked successfully.")
+    return all_from_dataset
 
 
 def post_upstash_command(rest_url: str, rest_token: str, *command_args) -> bool:
@@ -265,6 +367,11 @@ def publish_upstash_handshake(rest_url: str, rest_token: str, profile_id: str, t
     redis_key = f"swapedev:{profile_id}:tunnel_url"
     log(f"Publishing tunnel URL to Upstash Redis: {redis_key} -> {tunnel_url}")
     ok = post_upstash_command(rest_url, rest_token, "SET", redis_key, tunnel_url, "EX", 3600)
+    try:
+        gpu_info = subprocess.getoutput("nvidia-smi 2>&1")
+        post_upstash_command(rest_url, rest_token, "SET", f"swapedev:{profile_id}:gpu_info", gpu_info, "EX", 3600)
+    except Exception as e:
+        log(f"Warning: Failed to publish gpu_info: {e}")
     log(f"Upstash handshake publication for {redis_key}: success={ok}")
     return ok
 
@@ -457,9 +564,8 @@ def main():
 
         # 2. ComfyUI Setup
         os.makedirs("/kaggle/tmp", exist_ok=True)
-        if not os.path.exists(COMFY_DIR):
-            log(f"Step 2: Cloning ComfyUI into {COMFY_DIR}...")
-            run_command(["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", COMFY_DIR])
+        log(f"Step 2: Staging pinned ComfyUI ({PINNED_COMMITS['ComfyUI']})...")
+        git_clone_pinned("https://github.com/comfyanonymous/ComfyUI.git", COMFY_DIR, PINNED_COMMITS["ComfyUI"])
 
         # 3. Python Dependencies
         log("Step 3: Installing Python dependencies...")
@@ -468,29 +574,33 @@ def main():
 
         # Precompiled insightface
         whl_filename = "insightface-0.7.3-cp310-cp310-linux_x86_64.whl"
-        whl_path = os.path.join(DATASET_BASE, whl_filename)
-        if not os.path.exists(whl_path):
+        whl_path = None
+        if os.path.exists("/kaggle/input"):
+            for root, _, files in os.walk("/kaggle/input"):
+                if whl_filename in files:
+                    whl_path = os.path.join(root, whl_filename)
+                    break
+        if not whl_path or not os.path.exists(whl_path):
             whl_url = f"https://huggingface.co/deauxpas/colabrepo/resolve/main/{whl_filename}"
             whl_path = download_file(whl_url, "/kaggle/tmp", whl_filename)
         run_command([sys.executable, "-m", "pip", "install", "-q", whl_path], check=False)
 
-        # Custom nodes
+        # Custom nodes with pinned commit hashes
         custom_nodes_dir = os.path.join(COMFY_DIR, "custom_nodes")
         os.makedirs(custom_nodes_dir, exist_ok=True)
         nodes = [
-            ("ComfyUI-Manager", "https://github.com/ltdrdata/ComfyUI-Manager.git"),
-            ("ComfyUI-SAM2", "https://github.com/kijai/ComfyUI-segment-anything-2.git"),
-            ("ComfyUI-Impact-Pack", "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"),
-            ("ComfyUI-AnimateDiff-Evolved", "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved.git"),
-            ("comfyui-reactor-node", "https://github.com/Gourieff/comfyui-reactor-node.git"),
+            ("ComfyUI-Manager", "https://github.com/ltdrdata/ComfyUI-Manager.git", PINNED_COMMITS["ComfyUI-Manager"]),
+            ("ComfyUI-SAM2", "https://github.com/kijai/ComfyUI-segment-anything-2.git", PINNED_COMMITS["ComfyUI-SAM2"]),
+            ("ComfyUI-Impact-Pack", "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git", PINNED_COMMITS["ComfyUI-Impact-Pack"]),
+            ("ComfyUI-AnimateDiff-Evolved", "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved.git", PINNED_COMMITS["ComfyUI-AnimateDiff-Evolved"]),
+            ("ComfyUI-ReActor", "https://github.com/Gourieff/ComfyUI-ReActor.git", PINNED_COMMITS["ComfyUI-ReActor"]),
         ]
-        for node_name, repo_url in nodes:
+        for node_name, repo_url, commit_hash in nodes:
             node_path = os.path.join(custom_nodes_dir, node_name)
-            if not os.path.exists(node_path):
-                run_command(["git", "clone", "--depth", "1", repo_url, node_path], check=False)
-                req_file = os.path.join(node_path, "requirements.txt")
-                if os.path.exists(req_file):
-                    run_command([sys.executable, "-m", "pip", "install", "-q", "-r", req_file], check=False)
+            git_clone_pinned(repo_url, node_path, commit_hash)
+            req_file = os.path.join(node_path, "requirements.txt")
+            if os.path.exists(req_file):
+                run_command([sys.executable, "-m", "pip", "install", "-q", "-r", req_file], check=False)
 
         # 4. Mount heavy weights from Kaggle Dataset
         dataset_ready = setup_models_from_dataset_or_fallback(COMFY_DIR)

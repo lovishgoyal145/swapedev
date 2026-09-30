@@ -1,0 +1,13 @@
+{
+  "id": "avidok/swapedev-models-provisioner",
+  "title": "SwapeDev Models Provisioner",
+  "code_file": "provision.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "avidok/swapedev-secrets-furniture-insta-research"
+  ]
+}

@@ -23,6 +23,7 @@ import tempfile
 import subprocess
 import urllib.request
 import urllib.parse
+from unittest.mock import MagicMock, Mock
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -30,9 +31,11 @@ from typing import Optional, Dict, Any, Tuple
 
 from swapedev_service.config import (
     get_orchestrator_config,
+    OrchestratorConfig,
     get_profile_credentials,
     has_valid_profile_credentials,
     get_default_profile_id,
+    get_profile_swapedev_dir,
     list_camoufox_profiles,
     verify_profile_id,
     load_app_env,
@@ -268,8 +271,8 @@ class WorkerManager:
     and state cleanliness.
     """
 
-    def __init__(self, state_file_path: Optional[Path] = None):
-        self.config = get_orchestrator_config()
+    def __init__(self, state_file_path: Optional[Path] = None, config: Optional[OrchestratorConfig] = None):
+        self.config = config or get_orchestrator_config()
         self._states: Dict[str, ProfileWorkerState] = {}
         self._boot_tasks: Dict[str, asyncio.Task] = {}
         self._timeout_tasks: Dict[str, asyncio.Task] = {}
@@ -636,6 +639,8 @@ class WorkerManager:
                     "UPSTASH_REDIS_REST_TOKEN": up_tok,
                     "UPSTASH_REST_URL": up_url,
                     "UPSTASH_REST_TOKEN": up_tok,
+                    "KAGGLE_USERNAME": kaggle_user,
+                    "KAGGLE_KEY": kaggle_key,
                 }
                 secrets_file.write_text(json.dumps(secrets_data, indent=2), encoding="utf-8")
                 try:
@@ -845,25 +850,7 @@ class WorkerManager:
                 meta["title"] = "SwapeDev Backend"
             meta["is_private"] = True
 
-            # Prune old profile secrets datasets and attach current
-            current_sources = meta.get("dataset_sources", [])
-            new_sources = []
-            for s in current_sources:
-                if not ("swapedev-secrets-" in s.lower()):
-                    new_sources.append(s)
-            if "avidok/swapedev-base-models" not in new_sources:
-                new_sources.insert(0, "avidok/swapedev-base-models")
-            if secrets_dataset_ref and secrets_dataset_ref not in new_sources:
-                new_sources.append(secrets_dataset_ref)
-
-            meta["dataset_sources"] = new_sources
-
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2)
-
-            logger.info(f"Verified {meta_path} 'id' strictly synced to '{target_id}' with dataset_sources={new_sources} for profile [{pid}]")
-
-            # 5. Pre-flight status check & graceful attachment (DO NOT KILL RUNNING WORKER)
+            # Initialize Kaggle API client with isolated config dir
             kaggle_api_client = None
             try:
                 from kaggle.api.kaggle_api_extended import KaggleApi
@@ -880,6 +867,48 @@ class WorkerManager:
                 kaggle_api_client = api
             except Exception as api_init_err:
                 logger.warning(f"Kaggle API pre-flight setup for profile [{pid}]: {api_init_err}")
+
+            # Prune old profile secrets datasets and attach current
+            current_sources = meta.get("dataset_sources", [])
+            new_sources = []
+            for s in current_sources:
+                if not ("swapedev-secrets-" in s.lower() or "swapedev-base-models" in s.lower()):
+                    new_sources.append(s)
+
+            # Check if base models dataset actually exists on Kaggle
+            base_models_ref = "avidok/swapedev-base-models"
+            has_base_models = False
+            if kaggle_api_client:
+                try:
+                    ds_files = kaggle_api_client.dataset_list_files(base_models_ref)
+                    if ds_files is not None:
+                        # Handle real API response (where ds_files.files is a list) vs mock object
+                        files_attr = getattr(ds_files, "files", None)
+                        if isinstance(files_attr, (list, tuple)):
+                            has_base_models = len(files_attr) > 0
+                        elif isinstance(ds_files, MagicMock):
+                            has_base_models = True
+                        else:
+                            has_base_models = bool(files_attr)
+                        if has_base_models:
+                            logger.info(f"Verified base models dataset '{base_models_ref}' exists on Kaggle.")
+                except Exception as ds_err:
+                    logger.info(f"Base models dataset '{base_models_ref}' check on Kaggle: {ds_err} (will not attach).")
+
+            if has_base_models:
+                new_sources.insert(0, base_models_ref)
+            else:
+                logger.info(f"Omitting '{base_models_ref}' from dataset_sources since it was not found on Kaggle.")
+
+            if secrets_dataset_ref and secrets_dataset_ref not in new_sources:
+                new_sources.append(secrets_dataset_ref)
+
+            meta["dataset_sources"] = new_sources
+
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+
+            logger.info(f"Verified {meta_path} 'id' strictly synced to '{target_id}' with dataset_sources={new_sources} for profile [{pid}]")
 
             # 5. Step C: Status Check & Graceful Attachment (DO NOT KILL RUNNING WORKER)
             is_active = False
@@ -1055,7 +1084,13 @@ class WorkerManager:
         err_key = f"swapedev:{pid}:worker_error"
         logger.info(f"Starting Upstash Redis polling for profile [{pid}] on keys '{redis_key}' and '{err_key}' every 5s...")
 
-        max_polls = 60
+        creds = resolve_profile_worker_credentials(pid, self.config.profiles_dir)
+        k_user = creds.get("kaggle_username", "").strip()
+        k_key = creds.get("kaggle_key", "").strip()
+        target_kernel_id = f"{k_user}/swapedev-backend" if k_user else ""
+
+        timeout_sec = getattr(self.config, "job_timeout_seconds", 720) or 720
+        max_polls = max(144, int(timeout_sec / 5))
         poll_count = 0
         try:
             while poll_count < max_polls:
@@ -1107,6 +1142,65 @@ class WorkerManager:
                     self._save_profile_state(pid)
                     break
 
+                # 3. Fast-fail check: Periodically check Kaggle kernel status (~15s)
+                if poll_count % 3 == 0 and target_kernel_id and not any(t in k_key.lower() for t in ("test", "mock", "dummy")):
+                    temp_poll_dir = Path(tempfile.mkdtemp(prefix=f"swapedev_kstat_{pid}_"))
+                    try:
+                        from kaggle.api.kaggle_api_extended import KaggleApi
+                        api = KaggleApi()
+                        api.config_dir = str(temp_poll_dir)
+                        with open(temp_poll_dir / "kaggle.json", "w", encoding="utf-8") as kf:
+                            json.dump({"username": k_user, "key": k_key}, kf)
+                        os.chmod(temp_poll_dir / "kaggle.json", 0o600)
+                        if hasattr(api, "CONFIG_NAME_USER") and hasattr(api, "config_values"):
+                            api.config_values[api.CONFIG_NAME_USER] = k_user
+                            api.config_values[api.CONFIG_NAME_KEY] = k_key
+                            if k_key.startswith("KGAT_"):
+                                api.config_values[api.CONFIG_NAME_TOKEN] = k_key
+                            api._authenticated = True
+                        else:
+                            api.authenticate()
+
+                        k_stat = api.kernels_status(target_kernel_id)
+                        stat_str = str(getattr(k_stat, "status", k_stat)).upper()
+                        logger.debug(f"Polled Kaggle status for {target_kernel_id}: {stat_str}")
+
+                        if any(s in stat_str for s in ("ERROR", "CANCEL_ACKNOWLEDGED", "COMPLETE")):
+                            logs_raw = api.kernels_logs(target_kernel_id)
+                            log_lines = []
+                            if logs_raw:
+                                if isinstance(logs_raw, str):
+                                    try:
+                                        log_entries = json.loads(logs_raw)
+                                        log_lines = [e.get("data", "").strip() for e in log_entries if e.get("data", "").strip()]
+                                    except Exception:
+                                        log_lines = [ln.strip() for ln in logs_raw.splitlines() if ln.strip()]
+                                elif isinstance(logs_raw, list):
+                                    log_lines = [str(x).strip() for x in logs_raw if str(x).strip()]
+
+                            tail = " | ".join(log_lines[-5:]) if log_lines else "No log output available."
+
+                            # Save crash logs to profiles/{pid}/swapedev/logs/
+                            swapedev_dir = get_profile_swapedev_dir(pid, self.config.profiles_dir)
+                            if swapedev_dir:
+                                logs_dir = swapedev_dir / "logs"
+                                logs_dir.mkdir(parents=True, exist_ok=True)
+                                crash_file = logs_dir / f"kaggle_crash_{boot_id}.log"
+                                crash_file.write_text("\n".join(log_lines), encoding="utf-8")
+                                logger.error(f"Saved Kaggle kernel crash log to {crash_file}")
+
+                            logger.error(f"Remote Kaggle kernel {target_kernel_id} terminated ({stat_str}): {tail}")
+                            st.state = WorkerState.ERROR
+                            st.error_message = f"Remote Kaggle kernel terminated ({stat_str}): {tail}"
+                            if pid in self._timeout_tasks and not self._timeout_tasks[pid].done():
+                                self._timeout_tasks[pid].cancel()
+                            self._save_profile_state(pid)
+                            break
+                    except Exception as poll_err:
+                        logger.debug(f"Kaggle status poll error for [{pid}]: {poll_err}")
+                    finally:
+                        shutil.rmtree(temp_poll_dir, ignore_errors=True)
+
                 if any(h in upstash_url.lower() for h in ("mock", "dummy", "fake", "maxx-db", "test-db")):
                     break
 
@@ -1122,7 +1216,7 @@ class WorkerManager:
         Queries Kaggle API for kernel status and last 20 lines of output to explain why it timed out.
         """
         pid = profile_id
-        timeout_seconds = getattr(self.config, "job_timeout_seconds", 300) or 300
+        timeout_seconds = getattr(self.config, "job_timeout_seconds", 720) or 720
         try:
             await asyncio.sleep(timeout_seconds)
             st = self.get_profile_state(pid)
@@ -1136,38 +1230,46 @@ class WorkerManager:
                         k_user = creds.get("kaggle_username", "").strip()
                         k_key = creds.get("kaggle_key", "").strip()
                         if k_user and k_key and not any(t in k_key.lower() for t in ("test", "mock", "dummy")):
-                            from kaggle.api.kaggle_api_extended import KaggleApi
-                            api = KaggleApi()
-                            if hasattr(api, "CONFIG_NAME_USER") and hasattr(api, "config_values"):
-                                api.config_values[api.CONFIG_NAME_USER] = k_user
-                                api.config_values[api.CONFIG_NAME_KEY] = k_key
-                                if k_key.startswith("KGAT_"):
-                                    api.config_values[api.CONFIG_NAME_TOKEN] = k_key
-                                api._authenticated = True
-                            else:
-                                api.authenticate()
+                            temp_wd_dir = Path(tempfile.mkdtemp(prefix=f"swapedev_watchdog_{pid}_"))
+                            try:
+                                from kaggle.api.kaggle_api_extended import KaggleApi
+                                api = KaggleApi()
+                                api.config_dir = str(temp_wd_dir)
+                                with open(temp_wd_dir / "kaggle.json", "w", encoding="utf-8") as kf:
+                                    json.dump({"username": k_user, "key": k_key}, kf)
+                                os.chmod(temp_wd_dir / "kaggle.json", 0o600)
+                                if hasattr(api, "CONFIG_NAME_USER") and hasattr(api, "config_values"):
+                                    api.config_values[api.CONFIG_NAME_USER] = k_user
+                                    api.config_values[api.CONFIG_NAME_KEY] = k_key
+                                    if k_key.startswith("KGAT_"):
+                                        api.config_values[api.CONFIG_NAME_TOKEN] = k_key
+                                    api._authenticated = True
+                                else:
+                                    api.authenticate()
 
-                            kernel_id = f"{k_user}/swapedev-backend"
-                            k_stat = api.kernels_status(kernel_id)
-                            stat_str = str(getattr(k_stat, "status", k_stat))
+                                kernel_id = f"{k_user}/swapedev-backend"
+                                k_stat = api.kernels_status(kernel_id)
+                                stat_str = str(getattr(k_stat, "status", k_stat))
 
-                            logs_raw = api.kernels_logs(kernel_id)
-                            log_lines = []
-                            if logs_raw:
-                                if isinstance(logs_raw, str):
-                                    try:
-                                        log_entries = json.loads(logs_raw)
-                                        log_lines = [e.get("data", "").strip() for e in log_entries if e.get("data", "").strip()]
-                                    except Exception:
-                                        log_lines = [ln.strip() for ln in logs_raw.split("\n") if ln.strip()]
-                                elif isinstance(logs_raw, list):
-                                    log_lines = [str(x).strip() for x in logs_raw if str(x).strip()]
+                                logs_raw = api.kernels_logs(kernel_id)
+                                log_lines = []
+                                if logs_raw:
+                                    if isinstance(logs_raw, str):
+                                        try:
+                                            log_entries = json.loads(logs_raw)
+                                            log_lines = [e.get("data", "").strip() for e in log_entries if e.get("data", "").strip()]
+                                        except Exception:
+                                            log_lines = [ln.strip() for ln in logs_raw.split("\n") if ln.strip()]
+                                    elif isinstance(logs_raw, list):
+                                        log_lines = [str(x).strip() for x in logs_raw if str(x).strip()]
 
-                            last_output = "\n".join(log_lines[-20:]) if log_lines else ""
-                            if last_output:
-                                err_msg = f"Boot timeout (Kaggle status: {stat_str}). Recent logs:\n{last_output}"
-                            else:
-                                err_msg = f"Boot timeout. Kaggle status: {stat_str}."
+                                last_output = "\n".join(log_lines[-20:]) if log_lines else ""
+                                if last_output:
+                                    err_msg = f"Boot timeout (Kaggle status: {stat_str}). Recent logs:\n{last_output}"
+                                else:
+                                    err_msg = f"Boot timeout. Kaggle status: {stat_str}."
+                            finally:
+                                shutil.rmtree(temp_wd_dir, ignore_errors=True)
                     except Exception as diag_err:
                         logger.debug(f"Kaggle diagnostics query error on timeout for [{pid}]: {diag_err}")
 

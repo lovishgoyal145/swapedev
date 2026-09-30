@@ -270,9 +270,10 @@ def test_5_minute_timeout_watchdog():
     client = TestClient(ui_app)
     wm = get_worker_manager()
 
-    # Simulate worker booting with start time > 300s ago
+    # Simulate worker booting with start time exceeding configured timeout
+    timeout_sec = getattr(wm.config, "job_timeout_seconds", 300) or 300
     wm.state = WorkerState.AWAITING_TUNNEL
-    wm.boot_started_at = time.time() - 305  # 5 minutes and 5 seconds ago
+    wm.boot_started_at = time.time() - (timeout_sec + 10)
     wm._save_state()
 
     # Status query triggers deterministic timeout evaluation

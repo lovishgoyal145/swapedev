@@ -92,7 +92,7 @@ class OrchestratorConfig:
     concurrency_limit: int = 1
     # Timeouts
     job_timeout_seconds: int = field(
-        default_factory=lambda: int(os.getenv("SWAPEDEV_JOB_TIMEOUT_SECONDS", "300"))
+        default_factory=lambda: int(os.getenv("SWAPEDEV_JOB_TIMEOUT_SECONDS", "720"))
     )
     idle_watchdog_seconds: int = field(
         default_factory=lambda: int(os.getenv("SWAPEDEV_IDLE_WATCHDOG_SECONDS", "600"))
@@ -130,6 +130,12 @@ def set_orchestrator_config(config: OrchestratorConfig) -> None:
     global _global_config
     config.validate()
     _global_config = config
+
+
+def reset_orchestrator_config() -> None:
+    """Resets the cached global orchestrator configuration so it will be reloaded on next access."""
+    global _global_config
+    _global_config = None
 
 
 # =========================================================================
@@ -198,6 +204,15 @@ def get_profile_credentials(profile_id: str, profiles_dir: Optional[Path] = None
             up_token = str(data.get("UPSTASH_REDIS_REST_TOKEN") or data.get("upstash_redis_rest_token") or data.get("UPSTASH_REST_TOKEN") or data.get("upstash_rest_token") or "").strip()
             webhook_token = str(data.get("webhook_token") or "").strip()
 
+            if not k_user or not k_key:
+                env_u = os.getenv("KAGGLE_USERNAME", "").strip()
+                env_k = os.getenv("KAGGLE_KEY", "").strip()
+                if env_u and env_k:
+                    logger.warning(
+                        f"LOUD WARNING: Profile '{profile_id}' config.json is missing Kaggle credentials! "
+                        f"Found credentials in host environment (.env). Global fallback is strictly disallowed to preserve multi-tenant isolation!"
+                    )
+
             return {
                 "kaggle_username": k_user,
                 "kaggle_key": k_key,
@@ -211,6 +226,15 @@ def get_profile_credentials(profile_id: str, profiles_dir: Optional[Path] = None
             }
         except Exception as e:
             logger.warning(f"Failed to read credentials for profile '{profile_id}' from {cfg_path}: {e}")
+    else:
+        logger.warning(f"Profile credentials file not found for profile '{profile_id}' at {cfg_path}")
+        env_u = os.getenv("KAGGLE_USERNAME", "").strip()
+        env_k = os.getenv("KAGGLE_KEY", "").strip()
+        if env_u and env_k:
+            logger.warning(
+                f"LOUD WARNING: Profile '{profile_id}' has no config.json! Host environment has KAGGLE credentials, "
+                f"but SwapeDev strictly enforces tenant-isolated credentials. Zero fallback to .env allowed!"
+            )
     return {
         "kaggle_username": "",
         "kaggle_key": "",
